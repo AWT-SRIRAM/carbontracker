@@ -4,7 +4,7 @@ Handles Users, Profiles, Daily logs, and Analytics endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
 from typing import List
 from datetime import date
@@ -127,6 +127,7 @@ def get_user_logs(user_id: int, db: Session = Depends(get_db)):
     """List all logged daily activities for a user."""
     logs = db.execute(
         select(models.DailyLog)
+        .options(joinedload(models.DailyLog.action))
         .where(models.DailyLog.user_id == user_id)
         .order_by(models.DailyLog.logged_date.desc(), models.DailyLog.created_at.desc())
     ).scalars().all()
@@ -172,25 +173,26 @@ def get_dashboard_data(user_id: int, db: Session = Depends(get_db)):
     baselines = analytics.calculate_baseline(profile)
     baseline_total = sum(baselines.values())
 
-    # 3. Pull recent logs to calculate savings
-    logs = db.execute(
+    # 3. Pull recent logs to calculate savings (eagerly loading actions to prevent N+1 query issues)
+    logs_result = db.execute(
         select(models.DailyLog)
+        .options(joinedload(models.DailyLog.action))
         .where(models.DailyLog.user_id == user_id)
     ).scalars().all()
+    logs = list(logs_result)
 
-    savings_calc = analytics.calculate_savings(list(logs))
+    savings_calc = analytics.calculate_savings(logs)
     total_savings = savings_calc["total_savings_kg"]
 
     # 4. Generate dynamic insights
     insights = analytics.generate_personalized_insights(profile, baselines, savings_calc)
 
-    # 5. Fetch recent 10 logs for display
-    recent_logs = db.execute(
-        select(models.DailyLog)
-        .where(models.DailyLog.user_id == user_id)
-        .order_by(models.DailyLog.logged_date.desc(), models.DailyLog.created_at.desc())
-        .limit(10)
-    ).scalars().all()
+    # 5. Extract recent 10 logs directly from in-memory list to avoid a redundant SQL query
+    recent_logs = sorted(
+        logs,
+        key=lambda x: (x.logged_date, x.created_at),
+        reverse=True
+    )[:10]
 
     category_emissions_list = [
         schemas.CategoryEmissions(category=cat, co2_kg_monthly=val)
@@ -227,6 +229,7 @@ def export_user_logs_csv(user_id: int, db: Session = Depends(get_db)):
 
     logs = db.execute(
         select(models.DailyLog)
+        .options(joinedload(models.DailyLog.action))
         .where(models.DailyLog.user_id == user_id)
         .order_by(models.DailyLog.logged_date.desc(), models.DailyLog.created_at.desc())
     ).scalars().all()

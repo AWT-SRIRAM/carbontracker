@@ -3,11 +3,12 @@ Database configuration and session management.
 Provides connection pooling and session generators using SQLAlchemy.
 """
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 
-DATABASE_URL = "sqlite:///./ecotrace.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecotrace.db")
 
 # Create the engine. SQLite uses connect_args for multithreading compatibility in FastAPI.
 engine = create_engine(
